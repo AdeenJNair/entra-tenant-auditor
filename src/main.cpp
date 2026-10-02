@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "graph.hpp"
 #include "token.hpp"
 
 // std::getenv returns char* (NULL if unset). Wrap it so the rest of the code
@@ -22,9 +23,19 @@ int main() {
         std::cout << "Requesting token for tenant " << tenant_id << " ...\n";
         const AccessToken token = fetch_token(tenant_id, client_id, secret);
 
-        // Never print the token itself.
-        std::cout << "OK: got a token (" << token.value.size()
-                  << " chars), valid for " << token.expires_in << " seconds\n";
+        const auto users = graph_get_all(
+            "https://graph.microsoft.com/v1.0/users"
+            "?$select=id,displayName,userPrincipalName,userType,accountEnabled&$top=999",
+            token.value);
+
+        std::cout << "Found " << users.size() << " user(s):\n";
+        for (const auto& u : users) {
+            // .value(key, default) returns the default if the key is missing
+            // or null, instead of throwing.
+            std::cout << "  " << u.value("userPrincipalName", "?")
+                      << "  [" << u.value("userType", "?") << "]"
+                      << (u.value("accountEnabled", true) ? "" : "  (disabled)") << "\n";
+        }
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";

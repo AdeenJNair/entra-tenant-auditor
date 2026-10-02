@@ -8,5 +8,5 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(CURL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
-add_executable(entra_auditor src/main.cpp src/http.cpp src/token.cpp)
+add_executable(entra_auditor src/main.cpp src/http.cpp src/token.cpp src/graph.cpp)
 target_link_libraries(entra_auditor PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)

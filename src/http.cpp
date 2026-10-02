@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -37,6 +38,39 @@ struct CurlGlobal {
 };
 void ensure_curl_initialised() { static CurlGlobal g; (void)g; }
 
+// Owns a curl_slist (curl's linked list of header lines) and frees it.
+class HeaderList {
+public:
+    HeaderList() = default;
+    ~HeaderList() { curl_slist_free_all(list_); }
+    HeaderList(const HeaderList&) = delete;
+    HeaderList& operator=(const HeaderList&) = delete;
+    void add(const std::string& line) {
+        // curl_slist_append copies the string, so `line` may die afterwards.
+        curl_slist* next = curl_slist_append(list_, line.c_str());
+        if (!next) throw std::runtime_error("curl_slist_append failed");
+        list_ = next;
+    }
+    curl_slist* get() const { return list_; }
+private:
+    curl_slist* list_ = nullptr;
+};
+
+// Runs the prepared request and fills in status + body.
+HttpResponse perform(CurlHandle& curl) {
+    HttpResponse response;
+    curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response.body);
+    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 30L);  // never hang forever
+
+    const CURLcode rc = curl_easy_perform(curl.get());
+    if (rc != CURLE_OK)
+        throw std::runtime_error(std::string("HTTP request failed: ") + curl_easy_strerror(rc));
+
+    curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &response.status);
+    return response;
+}
+
 }  // namespace
 
 std::string url_encode(const std::string& value) {
@@ -54,26 +88,24 @@ std::string url_encode(const std::string& value) {
 HttpResponse http_post_form(const std::string& url, const std::string& form_body) {
     ensure_curl_initialised();
     CurlHandle curl;
-
-    HttpResponse response;
-    curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
-    std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> header_guard(
-        headers, &curl_slist_free_all);
+    HeaderList headers;
+    headers.add("Content-Type: application/x-www-form-urlencoded");
 
     curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers);
-    // POSTFIELDS with a std::string: COPYPOSTFIELDS makes curl keep its own
-    // copy, so we don't depend on form_body's lifetime.
+    curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get());
+    // COPYPOSTFIELDS makes curl keep its own copy of the body.
     curl_easy_setopt(curl.get(), CURLOPT_COPYPOSTFIELDS, form_body.c_str());
-    curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response.body);
-    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 30L);  // never hang forever
+    return perform(curl);
+}
 
-    const CURLcode rc = curl_easy_perform(curl.get());
-    if (rc != CURLE_OK)
-        throw std::runtime_error(std::string("HTTP request failed: ") + curl_easy_strerror(rc));
+HttpResponse http_get(const std::string& url, const std::string& bearer_token) {
+    ensure_curl_initialised();
+    CurlHandle curl;
+    HeaderList headers;
+    headers.add("Authorization: Bearer " + bearer_token);
+    headers.add("Accept: application/json");
 
-    curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &response.status);
-    return response;
+    curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get());
+    return perform(curl);
 }
