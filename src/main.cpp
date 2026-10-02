@@ -1,10 +1,13 @@
+#include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
 #include "audit.hpp"
 #include "graph.hpp"
+#include "report.hpp"
 #include "token.hpp"
 
 // std::getenv returns char* (NULL if unset). Wrap it so the rest of the code
@@ -45,8 +48,19 @@ int main() {
         findings.insert(findings.end(), role_findings.begin(), role_findings.end());
         escalate_privileged_without_mfa(findings);
 
+        // Worst first. The enum is declared Low < Medium < High, so sorting by
+        // severity in descending order puts High at the top. stable_sort keeps
+        // the original order among findings of equal severity.
+        std::stable_sort(findings.begin(), findings.end(),
+                         [](const Finding& a, const Finding& b) { return a.severity > b.severity; });
+
         print_findings(findings);
         std::cout << "\n" << findings.size() << " finding(s)\n";
+
+        std::filesystem::create_directories("reports");
+        write_csv("reports/audit.csv", findings);
+        write_html("reports/audit.html", findings, tenant_id);
+        std::cout << "Wrote reports/audit.csv and reports/audit.html\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
