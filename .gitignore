@@ -1,0 +1,22 @@
+# Build output
+build/
+vcpkg_installed/
+CMakeFiles/
+CMakeCache.txt
+
+# Secrets - NEVER commit these
+.env
+*.env
+secrets*
+*.pem
+*.pfx
+
+# Generated reports may contain real tenant data
+reports/
+*.csv
+!examples/*.csv
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

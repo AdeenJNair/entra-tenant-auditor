@@ -1,0 +1,8 @@
+{
+  "name": "entra-tenant-auditor",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "curl",
+    "nlohmann-json"
+  ]
+}
