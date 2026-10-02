@@ -1,0 +1,22 @@
+Auditing tenant 00000000-0000-0000-0000-000000000000
+Guardrail OK: tenant matches the lab tenant.
+Token permissions: User.Read.All, UserAuthenticationMethod.Read.All, RoleManagement.Read.Directory
+Users in tenant: 3
+
+[HIGH] MFA: lab.owner@contoso-lab.onmicrosoft.com
+    No MFA method registered and holds a privileged role
+    Why: An admin protected only by a password is the shortest path to full tenant takeover.
+[HIGH] MFA: bad.admin@contoso-lab.onmicrosoft.com
+    No MFA method registered and holds a privileged role
+    Why: An admin protected only by a password is the shortest path to full tenant takeover.
+[HIGH] Privileged role: lab.owner@contoso-lab.onmicrosoft.com
+    Holds Global Administrator
+    Why: Privileged roles can change the tenant itself: keep the list short and protected by MFA.
+[HIGH] Privileged role: bad.admin@contoso-lab.onmicrosoft.com
+    Holds Global Administrator
+    Why: Privileged roles can change the tenant itself: keep the list short and protected by MFA.
+[MEDIUM] MFA: no.mfa.user@contoso-lab.onmicrosoft.com
+    No MFA method registered
+    Why: A stolen password alone is enough to sign in as this user.
+
+5 finding(s)

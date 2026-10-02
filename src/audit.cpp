@@ -1,10 +1,12 @@
 #include "audit.hpp"
 
+#include <ctime>
 #include <map>
 #include <set>
 #include <utility>
 
 #include "graph.hpp"
+#include "time_util.hpp"
 
 std::vector<Finding> audit_guests(const std::vector<nlohmann::json>& users) {
     std::vector<Finding> findings;
@@ -115,4 +117,129 @@ void escalate_privileged_without_mfa(std::vector<Finding>& findings) {
             f.why = "An admin protected only by a password is the shortest path to full tenant takeover.";
         }
     }
+}
+
+namespace {
+
+// Returns j[key] if it is an object, else an empty object. Graph sends null for
+// parts of a policy that aren't configured, and .value() would throw on null.
+nlohmann::json object_at(const nlohmann::json& j, const char* key) {
+    const auto it = j.find(key);
+    return (it != j.end() && it->is_object()) ? *it : nlohmann::json::object();
+}
+
+std::vector<std::string> strings_at(const nlohmann::json& j, const char* key) {
+    std::vector<std::string> out;
+    const auto it = j.find(key);
+    if (it != j.end() && it->is_array())
+        for (const auto& v : *it)
+            if (v.is_string()) out.push_back(v.get<std::string>());
+    return out;
+}
+
+// "a, b, c" with ids replaced by names where we know them.
+std::string describe(const std::vector<std::string>& ids,
+                     const std::map<std::string, std::string>& names) {
+    std::string out;
+    for (const auto& id : ids) {
+        const auto it = names.find(id);
+        out += (out.empty() ? "" : ", ") + (it == names.end() ? id : it->second);
+    }
+    return out;
+}
+
+}  // namespace
+
+std::vector<Finding> analyse_conditional_access(const std::vector<nlohmann::json>& policies,
+                                                const std::vector<nlohmann::json>& users) {
+    std::map<std::string, std::string> user_names;
+    for (const auto& u : users) user_names[u.value("id", "")] = u.value("userPrincipalName", "?");
+    const std::map<std::string, std::string> no_names;  // groups/roles/apps stay as ids
+
+    std::vector<Finding> findings;
+    bool any_enforced = false;
+    for (const auto& p : policies) {
+        const std::string name  = p.value("displayName", "?");
+        const std::string state = p.value("state", "");
+
+        if (state == "enabled") {
+            any_enforced = true;
+        } else if (state == "enabledForReportingButNotEnforced") {
+            findings.push_back({Severity::Medium, "Conditional Access", name,
+                "Report-only: evaluated and logged, but NOT enforced",
+                "A report-only policy blocks nothing, so people may assume they are protected when they are not."});
+        } else {
+            findings.push_back({Severity::Low, "Conditional Access", name, "Policy is disabled",
+                "A disabled policy protects nothing: delete it or finish and enable it."});
+            continue;  // exclusions of a disabled policy don't matter
+        }
+
+        const auto users_cond = object_at(object_at(p, "conditions"), "users");
+        const auto apps_cond  = object_at(object_at(p, "conditions"), "applications");
+        std::string excluded;
+        const auto add = [&](const char* label, const std::string& text) {
+            if (!text.empty()) excluded += (excluded.empty() ? "" : "; ") + std::string(label) + ": " + text;
+        };
+        add("users",  describe(strings_at(users_cond, "excludeUsers"), user_names));
+        add("groups", describe(strings_at(users_cond, "excludeGroups"), no_names));
+        add("roles",  describe(strings_at(users_cond, "excludeRoles"), no_names));
+        add("apps",   describe(strings_at(apps_cond, "excludeApplications"), no_names));
+        if (!excluded.empty()) {
+            findings.push_back({Severity::Medium, "Conditional Access", name, "Excludes " + excluded,
+                "Every exclusion is a hole in the policy, and attackers look for excluded accounts first."});
+        }
+    }
+    if (!any_enforced) {
+        findings.push_back({Severity::High, "Conditional Access", "(tenant)",
+            "No Conditional Access policy is enforced",
+            "Without enforced policies, sign-ins are not protected by MFA, device or location rules."});
+    }
+    return findings;
+}
+
+std::vector<Finding> audit_conditional_access(const std::vector<nlohmann::json>& users,
+                                              const std::string& bearer_token) {
+    return analyse_conditional_access(
+        graph_get_all("https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies",
+                      bearer_token),
+        users);
+}
+
+std::vector<Finding> analyse_devices(const std::vector<nlohmann::json>& devices,
+                                     std::time_t now, int stale_days) {
+    std::vector<Finding> findings;
+    for (const auto& d : devices) {
+        const std::string name  = d.value("deviceName", "?");
+        const std::string owner = d.value("userPrincipalName", "no primary user");
+        const std::string state = d.value("complianceState", "unknown");
+        const std::string who   = name + " (" + owner + ")";
+
+        if (state == "noncompliant") {
+            findings.push_back({Severity::Medium, "Device", who, "Non-compliant with Intune policy",
+                "The device misses your security baseline (e.g. encryption or patches) yet may still reach company data."});
+        } else if (state != "compliant") {
+            findings.push_back({Severity::Low, "Device", who, "Compliance state: " + state,
+                "Compliance isn't confirmed, so you can't tell whether this device meets your baseline."});
+        }
+
+        const auto last = parse_utc_timestamp(d.value("lastSyncDateTime", ""));
+        if (last) {
+            const long days = static_cast<long>((now - *last) / 86400);
+            if (days > stale_days) {
+                findings.push_back({Severity::Medium, "Device", who,
+                    "Last check-in " + std::to_string(days) + " days ago",
+                    "A device that stopped checking in may be lost, stolen or unmanaged, with stale compliance data."});
+            }
+        }
+    }
+    return findings;
+}
+
+std::vector<Finding> audit_devices(const std::string& bearer_token, int stale_days) {
+    return analyse_devices(
+        graph_get_all(
+            "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices"
+            "?$select=id,deviceName,userPrincipalName,operatingSystem,complianceState,lastSyncDateTime",
+            bearer_token),
+        std::time(nullptr), stale_days);
 }

@@ -61,7 +61,7 @@ void write_csv(const std::string& path, const std::vector<Finding>& findings) {
 }
 
 void write_html(const std::string& path, const std::vector<Finding>& findings,
-                const std::string& tenant_id) {
+                const std::string& tenant_id, const std::vector<std::string>& skipped) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("Cannot write " + path);
 
@@ -71,7 +71,12 @@ void write_html(const std::string& path, const std::vector<Finding>& findings,
            "th,td{border:1px solid #ccc;padding:6px 10px;text-align:left}th{background:#eee}"
            ".sev{color:#fff;font-weight:bold;text-align:center}"
            "</style></head><body><h1>Entra Tenant Security Audit</h1><p>Tenant: "
-        << html_escape(tenant_id) << " &middot; " << findings.size() << " finding(s)</p>"
+        << html_escape(tenant_id) << " &middot; " << findings.size() << " finding(s)</p>";
+    // A module that could not run must be VISIBLE: a silent gap in a security
+    // report gives false assurance.
+    for (const auto& s : skipped)
+        out << "<p style=\"background:#fff3cd;padding:8px\"><b>Not audited:</b> " << html_escape(s) << "</p>";
+    out
         << "<table><tr><th>Severity</th><th>Category</th><th>Subject</th><th>Detail</th>"
            "<th>Why it matters</th></tr>";
     for (const auto& f : findings) {
