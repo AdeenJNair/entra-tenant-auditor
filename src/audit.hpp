@@ -1,0 +1,14 @@
+#pragma once
+#include <nlohmann/json.hpp>
+
+#include <string>
+#include <vector>
+
+#include "finding.hpp"
+
+// `users` is the JSON array returned by GET /users.
+std::vector<Finding> audit_guests(const std::vector<nlohmann::json>& users);
+
+// Calls GET /users/{id}/authentication/methods once per enabled user.
+std::vector<Finding> audit_mfa(const std::vector<nlohmann::json>& users,
+                               const std::string& bearer_token);
