@@ -41,6 +41,9 @@ int main() {
         std::vector<Finding> findings = audit_guests(users);
         const auto mfa_findings = audit_mfa(users, token.value);
         findings.insert(findings.end(), mfa_findings.begin(), mfa_findings.end());
+        const auto role_findings = audit_roles(token.value);
+        findings.insert(findings.end(), role_findings.begin(), role_findings.end());
+        escalate_privileged_without_mfa(findings);
 
         print_findings(findings);
         std::cout << "\n" << findings.size() << " finding(s)\n";
